@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { calcBill } from '../lib/calc';
+import { calcMemo } from '../lib/calc';
+import { RATE } from '../lib/config';
 import { T } from '../lib/i18n';
 
 const money = (n) =>
@@ -18,11 +19,11 @@ const monthLabel = (m, lang) => {
     year: 'numeric',
   });
 };
-const sortRecords = (list) => [...(list || [])].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+const newestFirst = (list) => [...list].sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
 
-// Decide what the form should show for a given month.
-function formFor(month, records, settings) {
-  const existing = records.find((r) => r.month === month);
+// What the form should show for a month: the saved memo, or a fresh one with the old reading carried over.
+function formFor(month, memos, settings) {
+  const existing = memos.find((m) => m.month === month);
   if (existing) {
     return {
       hint: false,
@@ -31,13 +32,10 @@ function formFor(month, records, settings) {
         oldReading: String(existing.oldReading),
         newReading: String(existing.newReading),
         rent: String(existing.rent),
-        gas: String(existing.gas),
-        other: String(existing.other || 0),
-        note: existing.note || '',
       },
     };
   }
-  const prev = records.filter((r) => r.month < month)[0]; // records are newest-first
+  const prev = memos.find((m) => m.month < month); // memos are newest first
   return {
     hint: Boolean(prev),
     form: {
@@ -45,24 +43,21 @@ function formFor(month, records, settings) {
       oldReading: prev ? String(prev.newReading) : '',
       newReading: '',
       rent: String(settings.rent),
-      gas: String(settings.gas),
-      other: '0',
-      note: '',
     },
   };
 }
 
-function Receipt({ rec, settings, lang, t, onClose }) {
+function Memo({ memo, settings, lang, t, onClose }) {
   const today = new Date().toLocaleDateString(lang === 'bn' ? 'bn-BD' : 'en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   });
-  const label = monthLabel(rec.month, lang);
+  const label = monthLabel(memo.month, lang);
 
   const print = () => {
     const old = document.title;
-    document.title = rec.receiptNo; // becomes the default PDF file name
+    document.title = memo.memoNo; // becomes the default PDF file name
     window.print();
     setTimeout(() => {
       document.title = old;
@@ -70,60 +65,42 @@ function Receipt({ rec, settings, lang, t, onClose }) {
   };
 
   const wa = `https://wa.me/?text=${encodeURIComponent(
-    `${rec.receiptNo} | ${label} | ${t.total}: ৳${money(rec.total)}`
+    `${memo.memoNo} | ${label} | ${t.total}: ৳${money(memo.total)}`
   )}`;
 
   return (
     <div>
-      <div className="receipt-card" id="receipt">
-        <h2>{settings.houseName || t.receiptTitle}</h2>
-        <div className="sub">{t.receiptTitle}</div>
-        <div className="receipt-meta">
-          <span>
-            <b>{t.receiptNo}:</b> {rec.receiptNo}
-          </span>
-          <span>
-            <b>{t.month}:</b> {label}
-          </span>
+      <div className="memo" id="memo">
+        <h2>{settings.houseName || t.memoTitle}</h2>
+        {settings.houseName ? <div className="sub">{t.memoTitle}</div> : null}
+        <div className="meta">
+          <span><b>{t.memoNo}:</b> {memo.memoNo}</span>
+          <span><b>{t.month}:</b> {label}</span>
         </div>
         {settings.person ? (
-          <div className="receipt-meta">
-            <span>
-              <b>{t.name}:</b> {settings.person}
-            </span>
-          </div>
+          <div className="meta"><span><b>{t.name}:</b> {settings.person}</span></div>
         ) : null}
 
-        <div className="receipt-section">{t.meter}</div>
-        <div className="row"><span>{t.oldShort}</span><span>{rec.oldReading}</span></div>
-        <div className="row"><span>{t.newShort}</span><span>{rec.newReading}</span></div>
-        <div className="row"><b>{t.units}</b><b>{rec.units}</b></div>
+        <div className="sec">{t.meter}</div>
+        <div className="row"><span>{t.oldShort}</span><span>{memo.oldReading}</span></div>
+        <div className="row"><span>{t.newShort}</span><span>{memo.newReading}</span></div>
+        <div className="row"><b>{t.units}</b><b>{memo.units}</b></div>
 
-        <div className="receipt-section">{t.charges}</div>
-        <div className="row"><span>{t.electricity}</span><span>{money(rec.electricity)}</span></div>
-        <div className="row"><span>{t.vat}</span><span>{money(rec.vat)}</span></div>
-        {rec.demand ? (
-          <div className="row"><span>{t.demand}</span><span>{money(rec.demand)}</span></div>
-        ) : null}
-        <div className="row"><span>{t.rent}</span><span>{money(rec.rent)}</span></div>
-        <div className="row"><span>{t.gas}</span><span>{money(rec.gas)}</span></div>
-        {rec.other ? (
-          <div className="row">
-            <span>{rec.note ? `${t.other.replace(' (optional)', '')} (${rec.note})` : t.other.replace(' (optional)', '')}</span>
-            <span>{money(rec.other)}</span>
-          </div>
-        ) : null}
-        <div className="row total"><span>{t.total}</span><span>৳ {money(rec.total)}</span></div>
-
-        <div className="receipt-foot">
-          {t.date}: {today} &nbsp;|&nbsp; {t.thanks}
+        <div className="sec">{t.charges}</div>
+        <div className="row">
+          <span>{t.electricity} ({memo.units} × {memo.rate} {t.perUnit})</span>
+          <span>{money(memo.electricity)}</span>
         </div>
+        <div className="row"><span>{t.houseRent}</span><span>{money(memo.rent)}</span></div>
+        <div className="row total"><span>{t.total}</span><span>৳ {money(memo.total)}</span></div>
+
+        <div className="foot"><span>{t.date}: {today}</span><span>{t.thanks}</span></div>
       </div>
 
-      <div className="receipt-actions no-print">
+      <div className="memo-actions no-print">
         <button type="button" onClick={print}>{t.print}</button>
         <a className="wa" href={wa} target="_blank" rel="noopener noreferrer">{t.whatsapp}</a>
-        <button type="button" className="close" onClick={onClose}>{t.close}</button>
+        <button type="button" className="alt" onClick={onClose}>{t.close}</button>
       </div>
     </div>
   );
@@ -133,14 +110,16 @@ export default function Home() {
   const [lang, setLang] = useState('en');
   const [phase, setPhase] = useState('loading'); // loading | login | ready | error
   const [error, setError] = useState('');
-  const [settings, setSettings] = useState(null);
-  const [records, setRecords] = useState([]);
+  const [settings, setSettings] = useState({ houseName: '', person: '', rent: 8080 });
+  const [memos, setMemos] = useState([]);
   const [form, setForm] = useState(null);
   const [hint, setHint] = useState(false);
-  const [msg, setMsg] = useState(null); // { kind: 'err' | 'warn', text, replace? }
+  const [msg, setMsg] = useState(null); // { kind, text, replace? }
   const [busy, setBusy] = useState(false);
-  const [receipt, setReceipt] = useState(null);
+  const [memo, setMemo] = useState(null);
   const [password, setPassword] = useState('');
+  const [draft, setDraft] = useState(null); // settings form
+  const [setMsgText, setSetMsgText] = useState('');
   const t = T[lang];
 
   useEffect(() => {
@@ -151,23 +130,25 @@ export default function Home() {
     load();
   }, []);
 
+  function applyData(d, month) {
+    const list = newestFirst(d.memos);
+    const f = formFor(month || thisMonth(), list, d.settings);
+    setMemos(list);
+    setSettings(d.settings);
+    setDraft({ houseName: d.settings.houseName, person: d.settings.person, rent: String(d.settings.rent) });
+    setForm(f.form);
+    setHint(f.hint);
+  }
+
   async function load() {
     setPhase('loading');
     setError('');
     try {
       const res = await fetch('/api/data', { cache: 'no-store' });
-      if (res.status === 401) {
-        setPhase('login');
-        return;
-      }
+      if (res.status === 401) return setPhase('login');
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Could not load data.');
-      const recs = sortRecords(d.records);
-      const f = formFor(thisMonth(), recs, d.settings);
-      setSettings(d.settings);
-      setRecords(recs);
-      setForm(f.form);
-      setHint(f.hint);
+      applyData(d);
       setPhase('ready');
     } catch (e) {
       setError(e.message);
@@ -183,17 +164,14 @@ export default function Home() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     });
-    if (!res.ok) {
-      setError(t.wrongPassword);
-      return;
-    }
+    if (!res.ok) return setError(t.wrongPassword);
     setPassword('');
     load();
   }
 
   async function logout() {
     await fetch('/api/logout', { method: 'POST' });
-    setReceipt(null);
+    setMemo(null);
     setPhase('login');
   }
 
@@ -206,7 +184,7 @@ export default function Home() {
   }
 
   function changeMonth(m) {
-    const f = formFor(m, records, settings);
+    const f = formFor(m || thisMonth(), memos, settings);
     setForm(f.form);
     setHint(f.hint);
     setMsg(null);
@@ -215,21 +193,12 @@ export default function Home() {
   const setField = (k, v) => setForm((prev) => ({ ...prev, [k]: v }));
 
   const preview = useMemo(() => {
-    if (!form || !settings) return null;
+    if (!form) return null;
     const o = parseFloat(form.oldReading);
     const n = parseFloat(form.newReading);
     if (Number.isNaN(o) || Number.isNaN(n) || n < o) return null;
-    return calcBill(
-      {
-        oldReading: o,
-        newReading: n,
-        rent: parseFloat(form.rent) || 0,
-        gas: parseFloat(form.gas) || 0,
-        other: parseFloat(form.other) || 0,
-      },
-      settings
-    );
-  }, [form, settings]);
+    return calcMemo({ oldReading: o, newReading: n, rent: parseFloat(form.rent) || 0 });
+  }, [form]);
 
   async function generate(overwrite = false) {
     setMsg(null);
@@ -245,21 +214,14 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, overwrite }),
       });
-      if (res.status === 401) {
-        setPhase('login');
-        return;
-      }
+      if (res.status === 401) return setPhase('login');
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Could not save.');
-      if (d.status === 'exists') {
-        setMsg({ kind: 'warn', text: t.exists, replace: true });
-        return;
-      }
-      const recs = sortRecords(d.records);
-      setRecords(recs);
-      setSettings(d.settings);
-      setReceipt(d.record);
+      if (d.status === 'exists') return setMsg({ kind: 'warn', text: t.exists, replace: true });
+      applyData(d, form.month);
       setHint(false);
+      setMemo(d.memo);
+      setMsg({ kind: 'ok', text: t.saved });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
       setMsg({ kind: 'err', text: e.message });
@@ -268,23 +230,66 @@ export default function Home() {
     }
   }
 
+  async function remove(month) {
+    if (!window.confirm(t.confirmDel)) return;
+    try {
+      const res = await fetch('/api/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Could not delete.');
+      if (memo && memo.month === month) setMemo(null);
+      applyData(d, form.month);
+    } catch (e) {
+      setMsg({ kind: 'err', text: e.message });
+    }
+  }
+
+  async function saveSettings() {
+    setSetMsgText('');
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'Could not save settings.');
+      applyData(d, form.month);
+      setSetMsgText(t.settingsSaved);
+    } catch (e) {
+      setSetMsgText(e.message);
+    }
+  }
+
+  function downloadCsv() {
+    const head = ['Memo No', 'Month', 'Old Reading', 'New Reading', 'Units', 'Rate', 'Electricity', 'House Rent', 'Total'];
+    const rows = [...memos].reverse().map((m) =>
+      [m.memoNo, m.month, m.oldReading, m.newReading, m.units, m.rate, m.electricity, m.rent, m.total].join(',')
+    );
+    const blob = new Blob(['﻿' + head.join(',') + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'house-bills.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   const yearTotals = useMemo(() => {
     const totals = {};
-    records.forEach((r) => {
-      const y = r.month.slice(0, 4);
-      totals[y] = (totals[y] || 0) + r.total;
+    memos.forEach((m) => {
+      const y = m.month.slice(0, 4);
+      totals[y] = (totals[y] || 0) + m.total;
     });
-    return Object.keys(totals)
-      .sort()
-      .reverse()
-      .map((y) => [y, totals[y]]);
-  }, [records]);
+    return Object.keys(totals).sort().reverse().map((y) => [y, totals[y]]);
+  }, [memos]);
 
   /* ---------- Screens ---------- */
 
-  if (phase === 'loading') {
-    return <div className="wrap"><p className="muted">{t.loading}</p></div>;
-  }
+  if (phase === 'loading') return <div className="wrap"><p className="muted">{t.loading}</p></div>;
 
   if (phase === 'login') {
     return (
@@ -308,7 +313,7 @@ export default function Home() {
     return (
       <div className="wrap">
         <div className="card">
-          <div className="msg err">{error}</div>
+          <div className="msg err" style={{ marginTop: 0 }}>{error}</div>
           <br />
           <button className="primary" type="button" onClick={load}>{t.retry}</button>
         </div>
@@ -326,9 +331,7 @@ export default function Home() {
         </div>
       </header>
 
-      {receipt ? (
-        <Receipt rec={receipt} settings={settings} lang={lang} t={t} onClose={() => { setReceipt(null); changeMonth(form.month); }} />
-      ) : null}
+      {memo ? <Memo memo={memo} settings={settings} lang={lang} t={t} onClose={() => setMemo(null)} /> : null}
 
       <div className="card no-print">
         <div className="grid">
@@ -345,52 +348,39 @@ export default function Home() {
             <label htmlFor="new">{t.newR}</label>
             <input id="new" type="number" inputMode="decimal" step="any" min="0" value={form.newReading} onChange={(e) => setField('newReading', e.target.value)} />
           </div>
-          <div>
+          <div className="full">
             <label htmlFor="rent">{t.rent}</label>
             <input id="rent" type="number" inputMode="decimal" step="any" min="0" value={form.rent} onChange={(e) => setField('rent', e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor="gas">{t.gas}</label>
-            <input id="gas" type="number" inputMode="decimal" step="any" min="0" value={form.gas} onChange={(e) => setField('gas', e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor="other">{t.other}</label>
-            <input id="other" type="number" inputMode="decimal" step="any" min="0" value={form.other} onChange={(e) => setField('other', e.target.value)} />
-          </div>
-          <div>
-            <label htmlFor="note">{t.note}</label>
-            <input id="note" type="text" value={form.note} onChange={(e) => setField('note', e.target.value)} />
+            <div className="hint">{t.rateHint}</div>
           </div>
         </div>
 
         {preview ? (
-          <div className="preview">
+          <div className="preview" id="preview">
             <div className="row"><span>{t.units}</span><b>{preview.units}</b></div>
-            <div className="row"><span>{t.electricity}</span><span>{money(preview.electricity)}</span></div>
-            <div className="row"><span>{t.vat} ({settings.vat}%)</span><span>{money(preview.vat)}</span></div>
-            {preview.demand ? <div className="row"><span>{t.demand}</span><span>{money(preview.demand)}</span></div> : null}
+            <div className="row"><span>{t.electricity} ({preview.units} × {RATE})</span><span>{money(preview.electricity)}</span></div>
+            <div className="row"><span>{t.houseRent}</span><span>{money(parseFloat(form.rent) || 0)}</span></div>
             <div className="row total"><span>{t.total}</span><span>৳ {money(preview.total)}</span></div>
           </div>
         ) : null}
 
         {msg ? (
-          <div className={`msg ${msg.kind}`}>
+          <div className={`msg ${msg.kind}`} id="msg">
             {msg.text}
             {msg.replace ? <button type="button" onClick={() => generate(true)}>{t.replace}</button> : null}
           </div>
         ) : null}
 
         <br />
-        <button className="primary" type="button" disabled={busy} onClick={() => generate(false)}>
+        <button className="primary" id="gen" type="button" disabled={busy} onClick={() => generate(false)}>
           {busy ? t.generating : t.generate}
         </button>
-        <div className="hint">{t.settingsHint}</div>
       </div>
 
       <div className="card no-print">
         <h2 style={{ fontSize: 16, margin: '0 0 10px 0' }}>{t.history}</h2>
         {yearTotals.length ? (
-          <div className="years">
+          <div className="years" id="years">
             {yearTotals.map(([y, total]) => (
               <span className="chip" key={y}>{y} {t.paid}: ৳ {money(total)}</span>
             ))}
@@ -407,20 +397,19 @@ export default function Home() {
                 <th></th>
               </tr>
             </thead>
-            <tbody>
-              {records.length === 0 ? (
+            <tbody id="hist">
+              {memos.length === 0 ? (
                 <tr><td colSpan={5}>{t.none}</td></tr>
               ) : (
-                records.map((r) => (
-                  <tr key={r.month}>
-                    <td>{r.month}</td>
-                    <td className="num">{r.units}</td>
-                    <td className="num">{money(r.electricity)}</td>
-                    <td className="num"><b>{money(r.total)}</b></td>
-                    <td>
-                      <button type="button" className="link" onClick={() => { setReceipt(r); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
-                        {t.view}
-                      </button>
+                memos.map((m) => (
+                  <tr key={m.month}>
+                    <td>{m.month}</td>
+                    <td className="num">{m.units}</td>
+                    <td className="num">{money(m.electricity)}</td>
+                    <td className="num"><b>{money(m.total)}</b></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button type="button" className="link" data-view={m.month} onClick={() => { changeMonth(m.month); setMemo(m); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>{t.view}</button>
+                      <button type="button" className="link danger" data-del={m.month} onClick={() => remove(m.month)}>{t.del}</button>
                     </td>
                   </tr>
                 ))
@@ -428,6 +417,34 @@ export default function Home() {
             </tbody>
           </table>
         </div>
+        <div className="tools">
+          <button type="button" className="ghost" onClick={downloadCsv}>{t.csv}</button>
+        </div>
+      </div>
+
+      <div className="card no-print">
+        <details>
+          <summary>{t.settings}</summary>
+          <br />
+          <div className="grid">
+            <div>
+              <label htmlFor="sHouse">{t.house}</label>
+              <input id="sHouse" type="text" value={draft.houseName} onChange={(e) => setDraft({ ...draft, houseName: e.target.value })} />
+            </div>
+            <div>
+              <label htmlFor="sPerson">{t.person}</label>
+              <input id="sPerson" type="text" value={draft.person} onChange={(e) => setDraft({ ...draft, person: e.target.value })} />
+            </div>
+            <div className="full">
+              <label htmlFor="sRent">{t.defRent}</label>
+              <input id="sRent" type="number" step="any" min="0" value={draft.rent} onChange={(e) => setDraft({ ...draft, rent: e.target.value })} />
+            </div>
+          </div>
+          <div className="tools">
+            <button type="button" className="ghost" id="saveSettings" onClick={saveSettings}>{t.saveSettings}</button>
+          </div>
+          {setMsgText ? <div className="msg ok" id="setMsg">{setMsgText}</div> : null}
+        </details>
       </div>
     </div>
   );

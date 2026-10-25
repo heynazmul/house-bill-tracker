@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'House Bill Tracker',
-  description: 'Monthly electricity, rent and gas receipts saved to Google Sheets',
+  title: 'House Bill Memo',
+  description: 'Monthly house rent and electricity memo, saved in a Supabase database',
 };
 
 export const viewport = {
